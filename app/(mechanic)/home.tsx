@@ -9,6 +9,7 @@ import axios from 'axios';
 import OfferModal from '../components/OfferModal';
 import { BASE_URL, API_ENDPOINTS } from '../config';
 import { setLiveStatus } from '../store/liveStatusSlice';
+import LineRoute from '../components/LineRoute';
 
 Mapbox.setAccessToken('pk.eyJ1IjoiemFpbjAwNzgiLCJhIjoiY205anpmMjdkMGdxczJyb29oZDFrcnlqdSJ9.yq_UgdOd8WM8SbZf16JHgw');
 
@@ -71,6 +72,34 @@ interface MechanicData {
   _id?: string;
 }
 
+// Function to calculate distance between two points in kilometers
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// Function to get directions using Mapbox Directions API
+async function getDirections(start: [number, number], end: [number, number]) {
+  const accessToken = 'pk.eyJ1IjoiemFpbjAwNzgiLCJhIjoiY205anpmMjdkMGdxczJyb29oZDFrcnlqdSJ9.yq_UgdOd8WM8SbZf16JHgw';
+  const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${start[0]},${start[1]};${end[0]},${end[1]}?geometries=geojson&access_token=${accessToken}`;
+  
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching directions:', error);
+    throw error;
+  }
+}
+
 export default function MechanicHomeScreen() {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -80,6 +109,11 @@ export default function MechanicHomeScreen() {
   const [nearbyIssues, setNearbyIssues] = useState<Issue[]>([]);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
   const [isOfferModalVisible, setIsOfferModalVisible] = useState(false);
+  const [destination, setDestination] = useState<[number, number] | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [distance, setDistance] = useState<number | null>(null);
+  const [acceptedIssue, setAcceptedIssue] = useState<any>(null);
   const cameraRef = useRef<Mapbox.Camera>(null);
   const mechanicData = useSelector((state: RootState) => state.mechanicData);
   const dispatch = useDispatch();
@@ -213,6 +247,110 @@ export default function MechanicHomeScreen() {
     }
   }, [isLive]);
 
+  // Add polling for accepted offers
+  useEffect(() => {
+    if (isLive) {
+      const pollInterval = setInterval(async () => {
+        try {
+          const response = await axios.get(
+            `${API_ENDPOINTS.GET_MECHANIC_OFFERS}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${mechanicData.token}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+
+          if (response.data) {
+            // Find accepted offers
+            const acceptedOffers = response.data.filter((offer: any) => 
+              offer.status === 'ACCEPTED' && offer.issue.status === 'ACCEPTED'
+            );
+
+            if (acceptedOffers.length > 0) {
+              const latestAcceptedOffer = acceptedOffers[0];
+              setAcceptedIssue(latestAcceptedOffer.issue);
+
+              // If we have location data, calculate route
+              if (location && latestAcceptedOffer.issue.location?.coordinates) {
+                const [userLon, userLat] = latestAcceptedOffer.issue.location.coordinates;
+                
+                // Calculate distance
+                const distance = calculateDistance(
+                  location.coords.latitude,
+                  location.coords.longitude,
+                  userLat,
+                  userLon
+                );
+                setDistance(distance);
+
+                // Set destination
+                const destinationCoords: [number, number] = [userLon, userLat];
+                setDestination(destinationCoords);
+
+                // Get and set route
+                const start: [number, number] = [location.coords.longitude, location.coords.latitude];
+                const directions = await getDirections(start, destinationCoords);
+                
+                if (directions && directions.routes && directions.routes[0]) {
+                  const route = directions.routes[0].geometry.coordinates;
+                  setRouteCoordinates(route);
+                }
+
+                // Set navigating state
+                setIsNavigating(true);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error polling for accepted offers:', error);
+        }
+      }, 5000);
+
+      return () => clearInterval(pollInterval);
+    }
+  }, [isLive, location, mechanicData.token]);
+
+  // Update location periodically
+  useEffect(() => {
+    let locationInterval: NodeJS.Timeout;
+
+    const updateLocation = async () => {
+      try {
+        const currentLocation = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        setLocation(currentLocation);
+
+        // If we're navigating, update the route
+        if (isNavigating && destination) {
+          const start: [number, number] = [currentLocation.coords.longitude, currentLocation.coords.latitude];
+          const directions = await getDirections(start, destination);
+          
+          if (directions && directions.routes && directions.routes[0]) {
+            const route = directions.routes[0].geometry.coordinates;
+            setRouteCoordinates(route);
+          }
+        }
+      } catch (error) {
+        console.error('Error updating location:', error);
+      }
+    };
+
+    if (isLive) {
+      // Update location every 10 seconds
+      locationInterval = setInterval(updateLocation, 10000);
+      updateLocation(); // Initial update
+    }
+
+    return () => {
+      if (locationInterval) {
+        clearInterval(locationInterval);
+      }
+    };
+  }, [isLive, isNavigating, destination]);
+
   const handleToggleLive = () => {
     setIsLive(!isLive);
     dispatch(setLiveStatus(!isLive));
@@ -271,32 +409,73 @@ export default function MechanicHomeScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Map is always rendered in the background */}
-      <View style={styles.mapContainer}>
-        <Mapbox.MapView style={styles.map}>
-          {location && (
-            <Camera
-              ref={cameraRef}
-              centerCoordinate={[location.coords.longitude, location.coords.latitude]}
-              zoomLevel={14}
-              animationMode="flyTo"
-              animationDuration={2000}
-            />
-          )}
-          {location && (
-            <Mapbox.PointAnnotation
-              id="mechanicLocation"
-              coordinate={[location.coords.longitude, location.coords.latitude]}
-            >
-              <View style={styles.markerContainer}>
-                <View style={styles.markerBody}>
-                  <FontAwesome name="wrench" size={24} color="white" />
-                </View>
+      <Mapbox.MapView
+        style={styles.map}
+        styleURL={Mapbox.StyleURL.Street}
+        logoEnabled={false}
+        compassEnabled={true}
+        attributionEnabled={false}
+      >
+        <Mapbox.Camera
+          ref={cameraRef}
+          zoomLevel={14}
+          centerCoordinate={location ? [location.coords.longitude, location.coords.latitude] : [73.0479, 30.3753]}
+          animationMode="flyTo"
+          animationDuration={2000}
+        />
+
+        {/* Current Location Marker */}
+        {location && (
+          <Mapbox.MarkerView
+            id="currentLocation"
+            coordinate={[location.coords.longitude, location.coords.latitude]}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={[styles.markerContainer, { transform: [{ scale: 1.2 }] }]}>
+              <View style={[styles.markerBody, { width: 45, height: 45 }]}>
+                <FontAwesome name="wrench" size={28} color="white" />
               </View>
-            </Mapbox.PointAnnotation>
+            </View>
+          </Mapbox.MarkerView>
+        )}
+
+        {/* Destination Marker */}
+        {destination && (
+          <Mapbox.MarkerView
+            id="destination"
+            coordinate={destination}
+            anchor={{ x: 0.5, y: 0.5 }}
+          >
+            <View style={[styles.markerContainer, { transform: [{ scale: 1.2 }] }]}>
+              <View style={[styles.markerBody, styles.destinationBody, { width: 45, height: 45 }]}>
+                <FontAwesome name="user" size={28} color="white" />
+              </View>
+            </View>
+          </Mapbox.MarkerView>
+        )}
+
+        {/* Route Line */}
+        {routeCoordinates.length > 0 && (
+          <LineRoute coordinates={routeCoordinates} />
+        )}
+      </Mapbox.MapView>
+
+      {/* Show active issue status if there is one */}
+      {acceptedIssue && (
+        <View style={styles.activeIssueContainer}>
+          <Text style={styles.activeIssueTitle}>
+            Active Issue
+          </Text>
+          <Text style={styles.issueDescription}>
+            {acceptedIssue.description}
+          </Text>
+          {distance !== null && (
+            <Text style={styles.distanceText}>
+              Distance to user: {distance.toFixed(2)} km
+            </Text>
           )}
-        </Mapbox.MapView>
-      </View>
+        </View>
+      )}
 
       {/* Status Message */}
       {!isLive && (
@@ -402,7 +581,6 @@ export default function MechanicHomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  mapContainer: { flex: 1 },
   map: { flex: 1 },
   statusContainer: {
     position: 'absolute',
@@ -568,7 +746,7 @@ const styles = StyleSheet.create({
   markerBody: {
     width: 40,
     height: 40,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#2196F3',
     borderRadius: 20,
     borderWidth: 3,
     borderColor: 'white',
@@ -580,8 +758,39 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 5,
   },
+  destinationBody: {
+    backgroundColor: '#FF5252',
+  },
+  activeIssueContainer: {
+    position: 'absolute',
+    top: 90,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: 15,
+    borderRadius: 10,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    zIndex: 3,
+  },
+  activeIssueTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
   userName: {
     fontSize: 14,
     color: '#888',
+  },
+  distanceText: {
+    fontSize: 14,
+    color: '#2196F3',
+    fontWeight: 'bold',
+    marginTop: 5,
   },
 });

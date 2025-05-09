@@ -777,6 +777,7 @@ const MECHANICS = [
   }
 ];
 
+// Remove AsyncStorage constants
 const INITIAL_RADIUS = 5; // Start with 5km radius
 const RADIUS_INCREMENT = 5; // Increase by 5km each time
 const MAX_RADIUS = 20; // Maximum search radius
@@ -1560,10 +1561,11 @@ export default function MapScreen() {
           <Mapbox.MarkerView
             id="currentLocation"
             coordinate={[location.coords.longitude, location.coords.latitude]}
+            anchor={{ x: 0.5, y: 0.5 }}
           >
-            <View style={styles.markerContainer}>
-              <View style={styles.markerBody}>
-                <Ionicons name="person" size={24} color="white" />
+            <View style={[styles.markerContainer, { transform: [{ scale: 1.2 }] }]}>
+              <View style={[styles.markerBody, { width: 45, height: 45 }]}>
+                <Ionicons name="person" size={28} color="white" />
               </View>
             </View>
           </Mapbox.MarkerView>
@@ -1573,11 +1575,15 @@ export default function MapScreen() {
         {destination && isMapReady && (
           <Mapbox.MarkerView
             id="destination"
-            coordinate={destination}
+            coordinate={[
+              destination[0] + (destination[0] === location?.coords.longitude ? 0.0001 : 0),
+              destination[1] + (destination[1] === location?.coords.latitude ? 0.0001 : 0)
+            ]}
+            anchor={{ x: 0.5, y: 0.5 }}
           >
-            <View style={styles.markerContainer}>
-              <View style={[styles.markerBody, styles.destinationBody]}>
-                <Ionicons name="construct" size={24} color="white" />
+            <View style={[styles.markerContainer, { transform: [{ scale: 1.2 }] }]}>
+              <View style={[styles.markerBody, styles.destinationBody, { width: 45, height: 45 }]}>
+                <Ionicons name="construct" size={28} color="white" />
               </View>
             </View>
           </Mapbox.MarkerView>
