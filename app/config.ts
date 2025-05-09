@@ -29,6 +29,7 @@ export const API_ENDPOINTS = {
   UPDATE_MECHANIC_LOCATION: `${BASE_URL}/api/auth/mechanic/location/update`,
   UPDATE_MECHANIC_STATUS: `${BASE_URL}/api/auth/mechanic/live-status`,
   GET_NEARBY_MECHANICS: `${BASE_URL}/api/mechanics/nearby`,
+  GET_MECHANIC_OFFERS: `${BASE_URL}/api/mechanic/offers`,
 };
 
 // Socket.IO configuration
