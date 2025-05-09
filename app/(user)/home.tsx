@@ -1220,9 +1220,13 @@ export default function MapScreen() {
   };
 
   const startPollingForOffers = (issueId: string) => {
+    // Clear any existing polling interval
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+    }
+
     const pollInterval = setInterval(async () => {
       try {
-        console.log('Polling for offers, issueId:', issueId);
         const response = await axios.get(
           `${API_ENDPOINTS.GET_ISSUE}/${issueId}`,
           {
@@ -1233,47 +1237,34 @@ export default function MapScreen() {
           }
         );
 
-        console.log('Polling response:', JSON.stringify(response.data, null, 2));
-
         if (response.data) {
           const issue = response.data;
-          setCurrentIssue(issue); // Update current issue state
+          setCurrentIssue(issue);
           
           // If issue has offers, show them
           if (issue.offers && issue.offers.length > 0) {
-            console.log('Found offers:', JSON.stringify(issue.offers, null, 2));
-            const formattedOffers = issue.offers.map((offer: any) => {
-              console.log('Processing offer:', JSON.stringify(offer, null, 2));
-              return {
-                id: offer.mechanic._id,
-                name: offer.mechanic.fullName || offer.mechanic.name,
-                phoneNumber: offer.mechanic.phoneNumber,
-                rating: offer.mechanic.rating || '4.5',
-                experience: offer.mechanic.experience || '5 years',
-                price: offer.price,
-                estimatedTime: offer.estimatedTime,
-                notes: offer.notes,
-                status: offer.status || 'pending',
-                location: offer.mechanic.location
-              };
-            });
-            console.log('Formatted offers:', JSON.stringify(formattedOffers, null, 2));
+            const formattedOffers = issue.offers.map((offer: any) => ({
+              id: offer.mechanic._id,
+              name: offer.mechanic.fullName || offer.mechanic.name,
+              phoneNumber: offer.mechanic.phoneNumber,
+              rating: offer.mechanic.rating || '4.5',
+              experience: offer.mechanic.experience || '5 years',
+              price: offer.price,
+              estimatedTime: offer.estimatedTime,
+              notes: offer.notes,
+              status: offer.status || 'pending',
+              location: offer.mechanic.location
+            }));
             setMechanics(formattedOffers);
-          } else {
-            console.log('No offers found in polling response');
-            setMechanics([]);
           }
 
           // If an offer was accepted, calculate distance and show route
           if (issue.status === 'ACCEPTED' && issue.acceptedOffer) {
-            console.log('Issue accepted, finding accepted mechanic...');
-            clearInterval(pollInterval);
             const acceptedMechanic = issue.offers.find(
               (offer: any) => offer.mechanic._id === issue.acceptedOffer
             );
-            console.log('Accepted mechanic:', JSON.stringify(acceptedMechanic, null, 2));
             
-            if (acceptedMechanic && location) {
+            if (acceptedMechanic?.mechanic?.location?.coordinates && location) {
               const distance = calculateDistance(
                 location.coords.latitude,
                 location.coords.longitude,
@@ -1281,18 +1272,40 @@ export default function MapScreen() {
                 acceptedMechanic.mechanic.location.coordinates[0]
               );
               setDistance(distance);
-              setDestination([
+
+              // Set destination coordinates
+              const destinationCoords: [number, number] = [
                 acceptedMechanic.mechanic.location.coordinates[0],
                 acceptedMechanic.mechanic.location.coordinates[1]
-              ]);
-              showRoute(acceptedMechanic.mechanic.location.coordinates);
+              ];
+              setDestination(destinationCoords);
+
+              // Center camera on destination
+              if (cameraRef.current) {
+                cameraRef.current.setCamera({
+                  centerCoordinate: destinationCoords,
+                  zoomLevel: 14,
+                  animationDuration: 2000
+                });
+              }
+
+              // Get and set route coordinates
+              const start: [number, number] = [location.coords.longitude, location.coords.latitude];
+              const directions = await getDirections(start, destinationCoords);
+              
+              if (directions && directions.routes && directions.routes[0]) {
+                const route = directions.routes[0].geometry.coordinates;
+                setRouteCoordinates(route);
+              }
+
+              // Set navigating state to true
+              setIsNavigating(true);
             }
           }
         }
       } catch (error: any) {
         console.error('Error polling for offers:', error);
-        console.error('Error response:', error.response?.data);
-        console.error('Error status:', error.response?.status);
+        // Don't clear the interval on error, just log it
       }
     }, 5000);
 
@@ -1304,12 +1317,20 @@ export default function MapScreen() {
       setIsLoading(true);
       setErrorMsg(null);
 
-      console.log('Accepting offer from mechanic:', mechanicId);
+      // Find the offer for this mechanic
+      const offer = currentIssue?.offers.find((o: any) => o.mechanic._id === mechanicId);
+      if (!offer) {
+        setErrorMsg('Offer not found');
+        return;
+      }
+
+      console.log('Accepting offer:', offer._id);
       console.log('For issue:', currentIssueId);
       console.log('Using token:', token);
+      console.log('Mechanic data:', offer.mechanic);
 
       const response = await axios.post(
-        `${API_ENDPOINTS.SUBMIT_OFFER}/${currentIssueId}/accept/${mechanicId}`,
+        `${API_ENDPOINTS.SUBMIT_OFFER}/${currentIssueId}/accept/${offer._id}`,
         {},
         {
           headers: {
@@ -1332,24 +1353,63 @@ export default function MapScreen() {
           (offer: any) => offer.mechanic._id === mechanicId
         );
 
-        if (acceptedMechanic && location) {
-          // Calculate distance to mechanic
-          const distance = calculateDistance(
-            location.coords.latitude,
-            location.coords.longitude,
-            acceptedMechanic.mechanic.location.coordinates[1],
-            acceptedMechanic.mechanic.location.coordinates[0]
-          );
-          setDistance(distance);
+        console.log('Accepted mechanic data:', acceptedMechanic);
 
-          // Show route to mechanic
-          showRoute(acceptedMechanic.mechanic.location.coordinates);
+        // Validate mechanic location data
+        if (!acceptedMechanic?.mechanic?.location?.coordinates) {
+          console.error('Mechanic location data is missing:', acceptedMechanic);
+          setErrorMsg('Mechanic location data is not available');
+          return;
         }
 
-        // Clear success message after 3 seconds
-        setTimeout(() => {
-          setErrorMsg(null);
-        }, 3000);
+        // Validate coordinates
+        const [longitude, latitude] = acceptedMechanic.mechanic.location.coordinates;
+        if (typeof longitude !== 'number' || typeof latitude !== 'number' ||
+            isNaN(longitude) || isNaN(latitude)) {
+          console.error('Invalid mechanic coordinates:', { longitude, latitude });
+          setErrorMsg('Invalid mechanic location data');
+          return;
+        }
+
+        if (!location) {
+          console.error('User location is not available');
+          setErrorMsg('Your location is not available');
+          return;
+        }
+
+        // Calculate distance to mechanic
+        const distance = calculateDistance(
+          location.coords.latitude,
+          location.coords.longitude,
+          latitude,
+          longitude
+        );
+        setDistance(distance);
+
+        // Set destination coordinates
+        const destinationCoords: [number, number] = [longitude, latitude];
+        setDestination(destinationCoords);
+
+        // Center camera on destination
+        if (cameraRef.current) {
+          cameraRef.current.setCamera({
+            centerCoordinate: destinationCoords,
+            zoomLevel: 14,
+            animationDuration: 2000
+          });
+        }
+
+        // Get and set route coordinates
+        const start: [number, number] = [location.coords.longitude, location.coords.latitude];
+        const directions = await getDirections(start, destinationCoords);
+        
+        if (directions && directions.routes && directions.routes[0]) {
+          const route = directions.routes[0].geometry.coordinates;
+          setRouteCoordinates(route);
+        }
+
+        // Set navigating state to true
+        setIsNavigating(true);
       }
     } catch (error: any) {
       console.error('Error accepting offer:', error);
@@ -1418,49 +1478,35 @@ export default function MapScreen() {
     };
   }, [pollingInterval]);
 
-  // Add useEffect to check for existing issues when component mounts
+  // Add this useEffect to load existing issues
   useEffect(() => {
-    checkExistingIssue();
-  }, []);
-
-  const checkExistingIssue = async () => {
-    try {
-      console.log('Checking for existing issues...');
-      console.log('Token:', token);
-      console.log('API Endpoint:', API_ENDPOINTS.GET_USER_ISSUES);
-
-      const response = await axios.get(
-        API_ENDPOINTS.GET_USER_ISSUES,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+    const loadExistingIssues = async () => {
+      try {
+        const response = await axios.get(
+          API_ENDPOINTS.GET_USER_ISSUES,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
           }
-        }
-      );
-
-      console.log('API Response:', JSON.stringify(response.data, null, 2));
-
-      if (response.data && response.data.length > 0) {
-        // Find the most recent active issue
-        const activeIssue = response.data.find((issue: any) => 
-          issue.status === 'PENDING' || issue.status === 'ACCEPTED'
         );
 
-        console.log('Active Issue:', JSON.stringify(activeIssue, null, 2));
+        if (response.data && response.data.length > 0) {
+          // Find the most recent active issue
+          const activeIssue = response.data.find((issue: any) => 
+            issue.status === 'PENDING' || issue.status === 'ACCEPTED'
+          );
 
-        if (activeIssue) {
-          setHasActiveIssue(true);
-          setCurrentIssue(activeIssue);
-          setCurrentIssueId(activeIssue._id);
-          
-          // If issue has offers, show them
-          if (activeIssue.offers && activeIssue.offers.length > 0) {
-            console.log('Processing offers:', JSON.stringify(activeIssue.offers, null, 2));
+          if (activeIssue) {
+            console.log('Found active issue:', activeIssue);
+            setCurrentIssue(activeIssue);
+            setCurrentIssueId(activeIssue._id);
+            setHasActiveIssue(true);
             
-            const formattedOffers = activeIssue.offers.map((offer: any) => {
-              console.log('Processing offer:', JSON.stringify(offer, null, 2));
-              return {
+            // If issue has offers, show them
+            if (activeIssue.offers && activeIssue.offers.length > 0) {
+              const formattedOffers = activeIssue.offers.map((offer: any) => ({
                 id: offer.mechanic._id,
                 name: offer.mechanic.fullName || offer.mechanic.name,
                 phoneNumber: offer.mechanic.phoneNumber,
@@ -1471,60 +1517,23 @@ export default function MapScreen() {
                 notes: offer.notes,
                 status: offer.status || 'pending',
                 location: offer.mechanic.location
-              };
-            });
-            
-            console.log('Formatted offers:', JSON.stringify(formattedOffers, null, 2));
-            setMechanics(formattedOffers);
-          } else {
-            console.log('No offers found for this issue');
-            setMechanics([]);
-          }
-
-          // If issue was accepted, show route
-          if (activeIssue.status === 'ACCEPTED' && activeIssue.acceptedOffer) {
-            console.log('Issue is accepted, finding accepted mechanic...');
-            const acceptedMechanic = activeIssue.offers.find(
-              (offer: any) => offer.mechanic._id === activeIssue.acceptedOffer
-            );
-            console.log('Accepted mechanic:', JSON.stringify(acceptedMechanic, null, 2));
-            
-            if (acceptedMechanic && location) {
-              const distance = calculateDistance(
-                location.coords.latitude,
-                location.coords.longitude,
-                acceptedMechanic.mechanic.location.coordinates[1],
-                acceptedMechanic.mechanic.location.coordinates[0]
-              );
-              setDistance(distance);
-              showRoute(acceptedMechanic.mechanic.location.coordinates);
+              }));
+              setMechanics(formattedOffers);
             }
-          } else {
-            // Start polling for offers if issue is pending
-            console.log('Starting to poll for offers...');
+
+            // Start polling for this issue
             startPollingForOffers(activeIssue._id);
           }
-        } else {
-          console.log('No active issues found');
-          setHasActiveIssue(false);
-          setCurrentIssue(null);
-          setCurrentIssueId(null);
         }
-      } else {
-        console.log('No issues found in response');
-        setHasActiveIssue(false);
-        setCurrentIssue(null);
-        setCurrentIssueId(null);
+      } catch (error) {
+        console.error('Error loading existing issues:', error);
       }
-    } catch (error: any) {
-      console.error('Error checking existing issues:', error);
-      console.error('Error response:', error.response?.data);
-      console.error('Error status:', error.response?.status);
-      setHasActiveIssue(false);
-      setCurrentIssue(null);
-      setCurrentIssueId(null);
+    };
+
+    if (token) {
+      loadExistingIssues();
     }
-  };
+  }, [token]);
 
   return (
     <View style={styles.container}>

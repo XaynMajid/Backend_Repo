@@ -26,8 +26,8 @@ export const API_ENDPOINTS = {
   GET_OFFERS: `${BASE_URL}/api/issues`,
 
   // Mechanic endpoints
-  UPDATE_MECHANIC_LOCATION: `${BASE_URL}/api/mechanics/location/update`,
-  UPDATE_MECHANIC_STATUS: `${BASE_URL}/api/mechanics/status/update`,
+  UPDATE_MECHANIC_LOCATION: `${BASE_URL}/api/auth/mechanic/location/update`,
+  UPDATE_MECHANIC_STATUS: `${BASE_URL}/api/auth/mechanic/live-status`,
   GET_NEARBY_MECHANICS: `${BASE_URL}/api/mechanics/nearby`,
 };
 

@@ -1,5 +1,47 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
+# Include specific directories and files
+!app/
+!server/
+!package.json
+!app.json
+!babel.config.js
+!metro.config.js
+!tsconfig.json
+
+# Exclude everything else
+*
+!*/
+
+# Node modules
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Environment variables
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build files
+*.log
+*.tsbuildinfo
+
 # dependencies
 node_modules/
 
