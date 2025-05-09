@@ -51,8 +51,10 @@ node_modules/
 .expo/
 dist/
 web-build/
+
+# Expo environment
 expo-env.d.ts
-.env
+
 # Native
 *.orig.*
 *.jks
@@ -80,3 +82,6 @@ yarn-error.*
 *.tsbuildinfo
 
 app-example
+
+# Server specific
+server/index.js
