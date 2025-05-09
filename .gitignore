@@ -15,6 +15,7 @@
 
 # Node modules
 node_modules/
+server/node_modules/
 
 # Expo
 .expo/
@@ -24,6 +25,7 @@ web-build/
 # Environment variables
 .env
 .env.*
+config.ts
 
 # IDE
 .idea/
